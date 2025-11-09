@@ -42,6 +42,8 @@ from subprocess import Popen, PIPE
 import ast
 from sys import platform
 import pickle
+import fnmatch
+import subprocess
 
 ## Set global parameter
 global gen
@@ -164,6 +166,48 @@ ii = 1
 ########################################################################
 #   Function for running the model, returns objective function scores
 ########################################################################
+def check_folder(folder_path):
+    files = os.listdir(folder_path)
+    missing = []
+    if monthly == 0:
+        if 'discharge_daily.tss' not in files and 'discharge_monthavg.tss' not in files:
+            missing.append('discharge_*.tss')
+        if not any(fnmatch.fnmatch(f, 'log*.txt') for f in files):
+            missing.append('log*.txt')
+        if not any(fnmatch.fnmatch(f, 'runpy*.bat') for f in files):
+            missing.append('runpy*.bat')
+        if not any(fnmatch.fnmatch(f, 'settings_CWatM_template-Run*.ini') for f in files):
+            missing.append('settings_CWatM_template-Run*.ini')
+    elif monthly == 1:
+        if 'discharge_monthavg.tss' not in files:
+            missing.append('discharge_*.tss')
+        if not any(fnmatch.fnmatch(f, 'log*.txt') for f in files):
+            missing.append('log*.txt')
+        if not any(fnmatch.fnmatch(f, 'runpy*.bat') for f in files):
+            missing.append('runpy*.bat')
+        if not any(fnmatch.fnmatch(f, 'settings_CWatM_template-Run*.ini') for f in files):
+            missing.append('settings_CWatM_template-Run*.ini')
+        
+    return missing
+
+def scan_and_rerun(root_dir):
+    """
+    Scan all run folders in root_dir.
+    For each folder with missing outputs, rerun its batch file sequentially.
+    """
+    for entry in os.scandir(root_dir):
+        if entry.is_dir():
+            folder_path = entry.path
+            missing_files = check_folder(folder_path)
+            if missing_files:
+                print(f"❌ Missing {missing_files} in {folder_path}, trying to rerun...")
+                # Find .bat file
+                bat_files = [f for f in os.listdir(folder_path) if f.endswith(".bat")]
+                for bat in bat_files:
+                    bat_path = os.path.join(folder_path, bat)
+                    print(f"➡ Running {bat_path}")
+                    subprocess.run(bat_path, shell=True, cwd=folder_path)
+
 
 def RunModel(Individual):
 
@@ -237,12 +281,16 @@ def RunModel(Individual):
 		os.chdir(currentdir)
 
 
-	Qsim_tss = os.path.join(directory_run,dischargetss)
-	
-	
-	if os.path.isfile(Qsim_tss)==False:
-		print("run_rand_id: "+str(run_rand_id)+" File: "+ Qsim_tss)
-		raise Exception("No simulated streamflow found. Probably the model failed to start? Check the log files of the run!")
+	Qsim_tss = os.path.join(directory_run, dischargetss)
+
+	if not os.path.isfile(Qsim_tss):
+		print(f"❌ Missing {Qsim_tss}, trying to rerun...")
+		scan_and_rerun(SubCatchmentPath)
+
+		if not os.path.isfile(Qsim_tss):
+			raise Exception(
+				"No simulated streamflow found. Probably the model failed to start? Check the log files of the run!"
+			)
 	simulated_streamflow = pandas.read_csv(Qsim_tss,sep=r"\s+",index_col=0,skiprows=4,header=None,skipinitialspace=True)
 	simulated_streamflow[1][simulated_streamflow[1]==1e31] = np.nan
 
